@@ -2,12 +2,14 @@
 let appData = {
     usuario: null,
     data: [],
-    source: null,
-    chartsInitialized: false
+    source: null, // 'excel' | 'sheets'
+    chartsInitialized: false,
+    sheetsUrl: 'https://docs.google.com/spreadsheets/d/1UR2uZN4uSN6sK_7DhIF4ls16ipNXdcQbz5n23puVBwI/edit#gid=0'
 };
 
 let sCurveChart = null;
 let comparacionChart = null;
+let intervaloActualizacion;
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', function() {
@@ -94,14 +96,25 @@ function setupEventListeners() {
     // Carga de archivos Excel
     document.getElementById('excelInput')?.addEventListener('change', handleFileUpload);
 
+    // Google Sheets
+    document.getElementById('googleSheetsBtn')?.addEventListener('click', function() {
+        document.getElementById('googleSheetsForm').classList.remove('hidden');
+    });
+
+    document.getElementById('loadSheetsData')?.addEventListener('click', loadDataFromSheets);
+
     // Botones principales
     document.getElementById('generateAnalysis')?.addEventListener('click', generarAnalisis);
+    document.getElementById('generateAnalysisFromSheets')?.addEventListener('click', generarAnalisis);
     document.getElementById('generateReportBtn')?.addEventListener('click', generarReporte);
     document.getElementById('exportPdfBtn')?.addEventListener('click', exportarPDF);
     document.getElementById('closeModal')?.addEventListener('click', cerrarModal);
+    document.getElementById('backBtn')?.addEventListener('click', () => mostrarSeccion('presupuestoSection'));
+    document.getElementById('volverBtn')?.addEventListener('click', () => mostrarSeccion('analisisSection'));
+    document.getElementById('refreshDataBtn')?.addEventListener('click', actualizarDatos);
 }
 
-// 3. Funciones para análisis de desviaciones
+// 3. Manejo de archivos Excel
 function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -114,14 +127,15 @@ function handleFileUpload(e) {
             const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
             
             appData.data = XLSX.utils.sheet_to_json(firstSheet).map(row => ({
-                item: row['Ítem'] || '',
-                planificado: parseFloat(row['Planificado']) || 0,
-                real: parseFloat(row['Real']) || 0,
+                item: row['Ítem'] || row['item'] || '',
+                planificado: parseFloat(row['Planificado'] || row['planificado']) || 0,
+                real: parseFloat(row['Real'] || row['real']) || 0,
                 causa: '',
                 recomendacion: ''
             }));
 
             mostrarPreviewExcel(firstSheet);
+            appData.source = 'excel';
         } catch (error) {
             showAlert('Error al leer el archivo: ' + error.message, 'error');
         }
@@ -129,15 +143,76 @@ function handleFileUpload(e) {
     reader.readAsArrayBuffer(file);
 }
 
+function mostrarPreviewExcel(sheet) {
+    const html = XLSX.utils.sheet_to_html(sheet);
+    document.getElementById('excelPreview').innerHTML = html;
+    document.getElementById('excelModal').style.display = 'flex';
+}
+
+function cerrarModal() {
+    document.getElementById('excelModal').style.display = 'none';
+}
+
+// 4. Google Sheets
+async function loadDataFromSheets() {
+    const btn = document.getElementById('loadSheetsData');
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cargando...';
+    btn.disabled = true;
+
+    try {
+        const sheetId = appData.sheetsUrl.match(/\/d\/([^\/]+)/)?.[1];
+        if (!sheetId) throw new Error("URL no válida");
+
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&t=${Date.now()}`;
+        
+        const response = await fetch(csvUrl);
+        if (!response.ok) throw new Error("Error al cargar los datos");
+        
+        const csvData = await response.text();
+        appData.data = processCSVData(csvData);
+        appData.source = 'sheets';
+        
+        showAlert('Datos cargados correctamente', 'success');
+        document.getElementById('generateAnalysisFromSheets').classList.remove('hidden');
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    } finally {
+        btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Cargar';
+        btn.disabled = false;
+    }
+}
+
+function processCSVData(csv) {
+    const lines = csv.split('\n').filter(line => line.trim() !== '');
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    
+    return lines.slice(1).map(line => {
+        const values = line.split(',');
+        return {
+            item: values[0]?.replace(/"/g, '') || '',
+            planificado: parseFloat(values[1]) || 0,
+            real: parseFloat(values[2]) || 0,
+            causa: '',
+            recomendacion: ''
+        };
+    });
+}
+
+// 5. Análisis de datos
 function generarAnalisis() {
     if (appData.data.length === 0) {
         showAlert('No hay datos para analizar', 'error');
         return;
     }
-
+    
     procesarDatosAnalisis(appData.data);
     mostrarSeccion('analisisSection');
-    cerrarModal();
+    
+    if (appData.source === 'sheets') {
+        document.getElementById('refreshDataBtn').classList.remove('hidden');
+        if (intervaloActualizacion) clearInterval(intervaloActualizacion);
+        intervaloActualizacion = setInterval(actualizarDatos, 60000);
+    }
 }
 
 function procesarDatosAnalisis(data) {
@@ -146,7 +221,6 @@ function procesarDatosAnalisis(data) {
 
     data.forEach(item => {
         const desviacion = item.real - item.planificado;
-        const sobrecosto = desviacion > 0 ? desviacion : 0;
         const row = `
             <tr>
                 <td>${item.item}</td>
@@ -155,11 +229,11 @@ function procesarDatosAnalisis(data) {
                 <td class="${desviacion >= 0 ? 'text-danger' : 'text-success'}">
                     ${formatCurrency(Math.abs(desviacion))} ${desviacion >= 0 ? '▲' : '▼'}
                 </td>
-                <td class="${sobrecosto > 0 ? 'badge-overcost' : 'badge-saving'}">
-                    ${sobrecosto > 0 ? 'Sobrecosto' : 'Ahorro'}
+                <td class="${desviacion > 0 ? 'badge-overcost' : 'badge-saving'}">
+                    ${desviacion > 0 ? 'Sobrecosto' : 'Ahorro'}
                 </td>
                 <td>
-                    <select class="cause-select" onchange="actualizarCausa('${item.item}', this.value)">
+                    <select class="cause-select" onchange="updateCause('${item.item}', this.value)">
                         <option value="">Seleccionar...</option>
                         <option value="retraso">Retraso en entrega</option>
                         <option value="cambio">Cambio de alcance</option>
@@ -173,7 +247,12 @@ function procesarDatosAnalisis(data) {
     });
 }
 
-// 4. Funciones para reportes y gráficos
+function updateCause(item, causa) {
+    const itemData = appData.data.find(i => i.item === item);
+    if (itemData) itemData.causa = causa;
+}
+
+// 6. Reportes y gráficos
 function generarReporte() {
     mostrarSeccion('reportesSection');
     if (!appData.chartsInitialized) {
@@ -184,14 +263,18 @@ function generarReporte() {
 }
 
 function inicializarGraficos() {
-    // Destruir gráficos existentes
     if (sCurveChart) sCurveChart.destroy();
     if (comparacionChart) comparacionChart.destroy();
 
-    // Datos de ejemplo para la curva S
-    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'];
-    const planificado = [10, 25, 45, 70, 85, 100];
-    const real = [8, 20, 40, 60, 75, 90];
+    if (!appData.data || appData.data.length === 0) {
+        showAlert('No hay datos disponibles para generar gráficos', 'error');
+        return;
+    }
+
+    // Datos para gráficos
+    const items = appData.data.map(item => item.item);
+    const planificado = appData.data.map(item => item.planificado);
+    const real = appData.data.map(item => item.real);
 
     // Gráfico de Curva S
     sCurveChart = new Chart(
@@ -199,7 +282,7 @@ function inicializarGraficos() {
         {
             type: 'line',
             data: {
-                labels: meses,
+                labels: items,
                 datasets: [
                     {
                         label: 'Planificado',
@@ -230,25 +313,21 @@ function inicializarGraficos() {
     );
 
     // Gráfico de comparación
-    const items = appData.data.slice(0, 5).map(item => item.item);
-    const planificadoItems = appData.data.slice(0, 5).map(item => item.planificado);
-    const realItems = appData.data.slice(0, 5).map(item => item.real);
-
     comparacionChart = new Chart(
         document.getElementById('comparacionChart'),
         {
             type: 'bar',
             data: {
-                labels: items,
+                labels: items.slice(0, 5),
                 datasets: [
                     {
                         label: 'Planificado',
-                        data: planificadoItems,
+                        data: planificado.slice(0, 5),
                         backgroundColor: '#4e4376'
                     },
                     {
                         label: 'Real',
-                        data: realItems,
+                        data: real.slice(0, 5),
                         backgroundColor: '#2b5876'
                     }
                 ]
@@ -262,7 +341,73 @@ function inicializarGraficos() {
     appData.chartsInitialized = true;
 }
 
-// 5. Funciones auxiliares
+function actualizarGraficos() {
+    if (sCurveChart) sCurveChart.update();
+    if (comparacionChart) comparacionChart.update();
+}
+
+// 7. Exportar PDF
+function exportarPDF() {
+    const element = document.getElementById('reportesSection');
+    const exportBtn = document.getElementById('exportPdfBtn');
+    exportBtn.disabled = true;
+    exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generando...';
+
+    const elementsToHide = document.querySelectorAll('.reportes-actions, .user-menu');
+    elementsToHide.forEach(el => el.style.opacity = '0');
+
+    html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#FFFFFF'
+    }).then(canvas => {
+        const pdf = new jspdf.jsPDF('p', 'mm', 'a4');
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        const pdfWidth = pdf.internal.pageSize.getWidth() - 20;
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+        pdf.addImage(imgData, 'JPEG', 10, 10, pdfWidth, pdfHeight);
+        pdf.save('reporte_nanghi.pdf');
+    }).finally(() => {
+        elementsToHide.forEach(el => el.style.opacity = '1');
+        exportBtn.disabled = false;
+        exportBtn.innerHTML = 'Exportar como PDF';
+    });
+}
+
+// 8. Actualización de datos
+async function actualizarDatos() {
+    if (appData.source !== 'sheets') return;
+
+    const btn = document.getElementById('refreshDataBtn');
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Actualizando...';
+    btn.disabled = true;
+
+    try {
+        const sheetId = appData.sheetsUrl.match(/\/d\/([^\/]+)/)?.[1];
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&t=${Date.now()}`;
+        
+        const response = await fetch(csvUrl);
+        const csvData = await response.text();
+        
+        appData.data = processCSVData(csvData);
+        procesarDatosAnalisis(appData.data);
+        
+        if (appData.chartsInitialized) {
+            actualizarGraficos();
+        }
+        
+        showAlert('Datos actualizados correctamente', 'success');
+    } catch (error) {
+        showAlert('Error al actualizar: ' + error.message, 'error');
+    } finally {
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> Actualizar Datos';
+        btn.disabled = false;
+    }
+}
+
+// 9. Funciones auxiliares
 function mostrarSeccion(sectionId) {
     document.querySelectorAll('.container').forEach(sec => {
         sec.classList.add('hidden');
@@ -296,5 +441,9 @@ function generarRecomendacion(desviacion) {
         : "Mantener buen desempeño";
 }
 
-// Inicializar gráficos al cargar
-window.onload = inicializarGraficos;
+// Inicialización de gráficos al cargar
+window.onload = function() {
+    if (appData.data.length > 0) {
+        inicializarGraficos();
+    }
+};
