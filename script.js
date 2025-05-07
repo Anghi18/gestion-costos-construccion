@@ -1,350 +1,300 @@
 // Variables globales
-let currentFileInput = null;
-let excelData = [];
-let tendenciaChart = null;
+let appData = {
+    usuario: null,
+    data: [],
+    source: null,
+    chartsInitialized: false
+};
+
+let sCurveChart = null;
 let comparacionChart = null;
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', function() {
-  setupEventListeners();
-  setupFileInput();
+    initAuth();
+    setupEventListeners();
 });
 
+// 1. Autenticación mejorada
+function initAuth() {
+    // Mostrar/ocultar formularios
+    document.getElementById('showRegister')?.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.getElementById('loginForm').classList.add('hidden');
+        document.getElementById('registerForm').classList.remove('hidden');
+    });
+
+    document.getElementById('showLogin')?.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.getElementById('registerForm').classList.add('hidden');
+        document.getElementById('loginForm').classList.remove('hidden');
+    });
+
+    // Validación de login
+    document.getElementById('loginForm')?.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+
+        if (!email || !password) {
+            showAlert('Todos los campos son obligatorios', 'error');
+            return;
+        }
+
+        // Simulación de login exitoso
+        appData.usuario = { email: email };
+        showAlert('Inicio de sesión exitoso', 'success');
+        mostrarSeccion('presupuestoSection');
+    });
+
+    // Validación de registro
+    document.getElementById('registerForm')?.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const name = document.getElementById('name').value;
+        const email = document.getElementById('newEmail').value;
+        const password = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+
+        if (password !== confirmPassword) {
+            showAlert('Las contraseñas no coinciden', 'error');
+            return;
+        }
+
+        appData.usuario = { nombre: name, email: email };
+        showAlert('Registro exitoso. Redirigiendo...', 'success');
+        setTimeout(() => {
+            mostrarSeccion('presupuestoSection');
+        }, 1500);
+    });
+}
+
+// 2. Configuración de eventos
 function setupEventListeners() {
-  // Login
-  document.getElementById('loginForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    mostrarPresupuesto();
-  });
+    // Menús desplegables
+    document.querySelectorAll('.menu-button').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const dropdownId = this.id.replace('userBtn', 'dropdownMenu').replace('menuBtn', 'dropdownMenu');
+            toggleDropdown(dropdownId);
+        });
+    });
 
-  // Registro
-  document.getElementById('registerBtn').addEventListener('click', mostrarRegistro);
+    // Navegación
+    document.querySelectorAll('[id$="Link"]').forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const sectionId = this.id.replace('Link', 'Section');
+            if (sectionId === 'aboutSection') {
+                document.getElementById('aboutModal').style.display = 'flex';
+            } else {
+                mostrarSeccion(sectionId);
+            }
+        });
+    });
 
-  // Menús
-  document.getElementById('userBtn').addEventListener('click', () => toggleDropdown('dropdownMenu'));
-  document.getElementById('menuBtn').addEventListener('click', () => toggleDropdown('dropdownMenu'));
-  document.getElementById('userBtnAnalisis').addEventListener('click', () => toggleDropdown('dropdownMenuAnalisis'));
-  document.getElementById('menuBtnAnalisis').addEventListener('click', () => toggleDropdown('dropdownMenuAnalisis'));
-  document.getElementById('userBtnReportes').addEventListener('click', () => toggleDropdown('dropdownMenuReportes'));
-  document.getElementById('menuBtnReportes').addEventListener('click', () => toggleDropdown('dropdownMenuReportes'));
+    // Carga de archivos Excel
+    document.getElementById('excelInput')?.addEventListener('change', handleFileUpload);
 
-  // Navegación
-  document.getElementById('analisisLink').addEventListener('click', function(e) {
-    e.preventDefault();
-    mostrarAnalisis();
-  });
-  document.getElementById('reportesLink').addEventListener('click', function(e) {
-    e.preventDefault();
-    mostrarReportes();
-  });
-  document.getElementById('logoutLink').addEventListener('click', function(e) {
-    e.preventDefault();
-    cerrarSesion();
-  });
-  document.getElementById('presupuestoLink').addEventListener('click', function(e) {
-    e.preventDefault();
-    mostrarPresupuesto();
-  });
-  document.getElementById('reportesLinkAnalisis').addEventListener('click', function(e) {
-    e.preventDefault();
-    mostrarReportes();
-  });
-  document.getElementById('logoutLinkAnalisis').addEventListener('click', function(e) {
-    e.preventDefault();
-    cerrarSesion();
-  });
-  document.getElementById('presupuestoLinkReportes').addEventListener('click', function(e) {
-    e.preventDefault();
-    mostrarPresupuesto();
-  });
-  document.getElementById('analisisLinkReportes').addEventListener('click', function(e) {
-    e.preventDefault();
-    mostrarAnalisis();
-  });
-  document.getElementById('logoutLinkReportes').addEventListener('click', function(e) {
-    e.preventDefault();
-    cerrarSesion();
-  });
-
-  // Botones
-  document.getElementById('backBtn').addEventListener('click', mostrarPresupuesto);
-  document.getElementById('volverBtn').addEventListener('click', mostrarAnalisis);
-  document.getElementById('closeModal').addEventListener('click', cerrarModal);
-  document.getElementById('generateAnalysis').addEventListener('click', generarAnalisis);
-  document.getElementById('generateReportBtn').addEventListener('click', generarReporte);
-  document.getElementById('exportPdfBtn').addEventListener('click', exportarPDF);
-  document.getElementById('downloadTemplate').addEventListener('click', descargarPlantilla);
-  document.getElementById('googleSheetsBtn').addEventListener('click', conectarGoogleSheets);
+    // Botones principales
+    document.getElementById('generateAnalysis')?.addEventListener('click', generarAnalisis);
+    document.getElementById('generateReportBtn')?.addEventListener('click', generarReporte);
+    document.getElementById('exportPdfBtn')?.addEventListener('click', exportarPDF);
+    document.getElementById('closeModal')?.addEventListener('click', cerrarModal);
 }
 
-function setupFileInput() {
-  if (currentFileInput) {
-    currentFileInput.removeEventListener('change', handleFileUpload);
-  }
-  
-  const fileInput = document.getElementById('excelInput');
-  fileInput.value = '';
-  fileInput.addEventListener('change', handleFileUpload);
-  currentFileInput = fileInput;
-}
-
+// 3. Funciones para análisis de desviaciones
 function handleFileUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+    const file = e.target.files[0];
+    if (!file) return;
 
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      const data = new Uint8Array(e.target.result);
-      const workbook = XLSX.read(data, { type: 'array' });
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      
-      excelData = XLSX.utils.sheet_to_json(firstSheet, { header: ['item', 'planificado', 'real'] });
-      const html = XLSX.utils.sheet_to_html(firstSheet);
-      
-      document.getElementById('excelPreview').innerHTML = html;
-      abrirModal();
-    } catch (error) {
-      alert('Error al leer el archivo: ' + error.message);
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            
+            appData.data = XLSX.utils.sheet_to_json(firstSheet).map(row => ({
+                item: row['Ítem'] || '',
+                planificado: parseFloat(row['Planificado']) || 0,
+                real: parseFloat(row['Real']) || 0,
+                causa: '',
+                recomendacion: ''
+            }));
 
-function abrirModal() {
-  document.getElementById('excelModal').style.display = 'flex';
-}
-
-function cerrarModal() {
-  document.getElementById('excelModal').style.display = 'none';
+            mostrarPreviewExcel(firstSheet);
+        } catch (error) {
+            showAlert('Error al leer el archivo: ' + error.message, 'error');
+        }
+    };
+    reader.readAsArrayBuffer(file);
 }
 
 function generarAnalisis() {
-  if (excelData.length === 0) {
-    alert('No hay datos para analizar');
-    return;
-  }
-  
-  procesarDatosAnalisis(excelData);
-  cerrarModal();
-  mostrarAnalisis();
+    if (appData.data.length === 0) {
+        showAlert('No hay datos para analizar', 'error');
+        return;
+    }
+
+    procesarDatosAnalisis(appData.data);
+    mostrarSeccion('analisisSection');
+    cerrarModal();
 }
 
 function procesarDatosAnalisis(data) {
-  const tbody = document.getElementById('analisisTableBody');
-  const alertBox = document.getElementById('alertBox');
-  let alertHTML = '<h3>Alertas:</h3><ul>';
-  let hasAlerts = false;
-  
-  tbody.innerHTML = '';
-  
-  data.slice(1).forEach(row => {
-    if (!row.item || row.item.toString().trim() === '') return;
-    
-    const cleanPlanificado = parseFloat(row.planificado?.toString().replace(/[^0-9.-]/g, '')) || 0;
-    const cleanReal = parseFloat(row.real?.toString().replace(/[^0-9.-]/g, '')) || 0;
-    const diferencia = cleanReal - cleanPlanificado;
-    const porcentaje = cleanPlanificado !== 0 ? ((diferencia / cleanPlanificado) * 100).toFixed(1) : 0;
-    
-    const rowHTML = `
-      <tr>
-        <td>${row.item}</td>
-        <td>S/${cleanPlanificado.toLocaleString('es-PE')}</td>
-        <td>S/${cleanReal.toLocaleString('es-PE')}</td>
-        <td class="${diferencia >= 0 ? 'up' : 'down'}">
-          ${Math.abs(porcentaje)}% ${diferencia >= 0 ? '▲' : '▼'}
-        </td>
-      </tr>
-    `;
-    tbody.innerHTML += rowHTML;
-    
-    if (Math.abs(porcentaje) > 10) {
-      hasAlerts = true;
-      alertHTML += `
-        <li>
-          <strong>${row.item}:</strong> ${diferencia >= 0 ? '+' : ''}${porcentaje}% 
-          (S/${Math.abs(diferencia).toLocaleString('es-PE')})
-        </li>
-      `;
-    }
-  });
-  
-  alertHTML += '</ul>';
-  alertBox.innerHTML = hasAlerts ? alertHTML : '<p>No hay alertas significativas</p>';
+    const tbody = document.getElementById('analisisTableBody');
+    tbody.innerHTML = '';
+
+    data.forEach(item => {
+        const desviacion = item.real - item.planificado;
+        const sobrecosto = desviacion > 0 ? desviacion : 0;
+        const row = `
+            <tr>
+                <td>${item.item}</td>
+                <td>${formatCurrency(item.planificado)}</td>
+                <td>${formatCurrency(item.real)}</td>
+                <td class="${desviacion >= 0 ? 'text-danger' : 'text-success'}">
+                    ${formatCurrency(Math.abs(desviacion))} ${desviacion >= 0 ? '▲' : '▼'}
+                </td>
+                <td class="${sobrecosto > 0 ? 'badge-overcost' : 'badge-saving'}">
+                    ${sobrecosto > 0 ? 'Sobrecosto' : 'Ahorro'}
+                </td>
+                <td>
+                    <select class="cause-select" onchange="actualizarCausa('${item.item}', this.value)">
+                        <option value="">Seleccionar...</option>
+                        <option value="retraso">Retraso en entrega</option>
+                        <option value="cambio">Cambio de alcance</option>
+                        <option value="error">Error en cálculo</option>
+                    </select>
+                </td>
+                <td>${generarRecomendacion(desviacion)}</td>
+            </tr>
+        `;
+        tbody.innerHTML += row;
+    });
 }
 
-function toggleDropdown(id) {
-  const dropdown = document.getElementById(id);
-  dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-}
-
-function mostrarLogin() {
-  ocultarTodasSecciones();
-  document.getElementById('loginSection').style.display = 'flex';
-}
-
-function mostrarPresupuesto() {
-  ocultarTodasSecciones();
-  document.getElementById('presupuestoSection').style.display = 'block';
-  setupFileInput();
-}
-
-function mostrarAnalisis() {
-  ocultarTodasSecciones();
-  document.getElementById('analisisSection').style.display = 'block';
-  document.getElementById('generateReportBtn').style.display = 'block';
-  
-  if (excelData.length > 0) {
-    procesarDatosAnalisis(excelData);
-  }
-}
-
-function mostrarReportes() {
-  ocultarTodasSecciones();
-  document.getElementById('reportesSection').style.display = 'block';
-  document.getElementById('generateReportBtn').style.display = 'none';
-  
-  if (!window.chartsInitialized) {
-    inicializarGraficos();
-  }
-}
-
-function ocultarTodasSecciones() {
-  document.getElementById('loginSection').style.display = 'none';
-  document.getElementById('presupuestoSection').style.display = 'none';
-  document.getElementById('analisisSection').style.display = 'none';
-  document.getElementById('reportesSection').style.display = 'none';
-}
-
+// 4. Funciones para reportes y gráficos
 function generarReporte() {
-  mostrarReportes();
+    mostrarSeccion('reportesSection');
+    if (!appData.chartsInitialized) {
+        inicializarGraficos();
+    } else {
+        actualizarGraficos();
+    }
 }
 
 function inicializarGraficos() {
-  if (tendenciaChart) tendenciaChart.destroy();
-  if (comparacionChart) comparacionChart.destroy();
+    // Destruir gráficos existentes
+    if (sCurveChart) sCurveChart.destroy();
+    if (comparacionChart) comparacionChart.destroy();
 
-  // Datos de ejemplo
-  const datosTendencia = {
-    labels: ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'],
-    datasets: [
-      {
-        label: 'Planificado',
-        data: [15000, 14500, 16000, 15500, 17000, 16500],
-        borderColor: '#4e4376',
-        backgroundColor: 'rgba(78, 67, 118, 0.1)',
-        tension: 0.3
-      },
-      {
-        label: 'Real',
-        data: [18500, 15200, 16800, 16200, 17500, 18000],
-        borderColor: '#2b5876',
-        backgroundColor: 'rgba(43, 88, 118, 0.1)',
-        tension: 0.3
-      }
-    ]
-  };
+    // Datos de ejemplo para la curva S
+    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'];
+    const planificado = [10, 25, 45, 70, 85, 100];
+    const real = [8, 20, 40, 60, 75, 90];
 
-  const datosComparacion = {
-    labels: ['Materiales', 'Mano de obra', 'Equipos', 'Subcontratos', 'Gastos generales'],
-    datasets: [
-      {
-        label: 'Planificado',
-        data: [15000, 20000, 8000, 12000, 5000],
-        backgroundColor: '#4e4376'
-      },
-      {
-        label: 'Real',
-        data: [18500, 22300, 7200, 15750, 4800],
-        backgroundColor: '#2b5876'
-      }
-    ]
-  };
+    // Gráfico de Curva S
+    sCurveChart = new Chart(
+        document.getElementById('sCurveChart'),
+        {
+            type: 'line',
+            data: {
+                labels: meses,
+                datasets: [
+                    {
+                        label: 'Planificado',
+                        data: planificado,
+                        borderColor: '#4e4376',
+                        backgroundColor: 'rgba(78, 67, 118, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Real',
+                        data: real,
+                        borderColor: '#2b5876',
+                        backgroundColor: 'rgba(43, 88, 118, 0.1)',
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Curva S del Proyecto'
+                    }
+                }
+            }
+        }
+    );
 
-  tendenciaChart = new Chart(
-    document.getElementById('tendenciaChart'),
-    {
-      type: 'line',
-      data: datosTendencia,
-      options: { responsive: true }
-    }
-  );
+    // Gráfico de comparación
+    const items = appData.data.slice(0, 5).map(item => item.item);
+    const planificadoItems = appData.data.slice(0, 5).map(item => item.planificado);
+    const realItems = appData.data.slice(0, 5).map(item => item.real);
 
-  comparacionChart = new Chart(
-    document.getElementById('comparacionChart'),
-    {
-      type: 'bar',
-      data: datosComparacion,
-      options: { responsive: true }
-    }
-  );
+    comparacionChart = new Chart(
+        document.getElementById('comparacionChart'),
+        {
+            type: 'bar',
+            data: {
+                labels: items,
+                datasets: [
+                    {
+                        label: 'Planificado',
+                        data: planificadoItems,
+                        backgroundColor: '#4e4376'
+                    },
+                    {
+                        label: 'Real',
+                        data: realItems,
+                        backgroundColor: '#2b5876'
+                    }
+                ]
+            },
+            options: {
+                responsive: true
+            }
+        }
+    );
 
-  window.chartsInitialized = true;
+    appData.chartsInitialized = true;
 }
 
-function exportarPDF() {
-  const exportBtn = document.getElementById('exportPdfBtn');
-  exportBtn.disabled = true;
-  exportBtn.textContent = 'Generando PDF...';
-
-  // Forzar renderizado
-  if (tendenciaChart) {
-    tendenciaChart.update();
-    tendenciaChart.render();
-  }
-  if (comparacionChart) {
-    comparacionChart.update();
-    comparacionChart.render();
-  }
-
-  // Ocultar elementos
-  const elementsToHide = document.querySelectorAll('.reportes-actions, .user-menu');
-  elementsToHide.forEach(el => el.style.opacity = '0');
-
-  setTimeout(() => {
-    const element = document.getElementById('reportesSection');
-    
-    html2canvas(element, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: '#FFFFFF'
-    }).then(canvas => {
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdfWidth = pdf.internal.pageSize.getWidth() - 20;
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      pdf.addImage(imgData, 'JPEG', 10, 10, pdfWidth, pdfHeight);
-      pdf.save('reporte_nanghi.pdf');
-    }).catch(err => {
-      console.error('Error:', err);
-      alert('Error al generar PDF. Por favor, intente nuevamente.');
-    }).finally(() => {
-      elementsToHide.forEach(el => el.style.opacity = '1');
-      exportBtn.disabled = false;
-      exportBtn.textContent = 'Exportar como PDF';
+// 5. Funciones auxiliares
+function mostrarSeccion(sectionId) {
+    document.querySelectorAll('.container').forEach(sec => {
+        sec.classList.add('hidden');
     });
-  }, 500);
+    document.getElementById(sectionId)?.classList.remove('hidden');
 }
 
-function descargarPlantilla() {
-  alert("Descargando plantilla...");
-  // Implementar descarga real aquí
+function toggleDropdown(id) {
+    const dropdown = document.getElementById(id);
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
 }
 
-function conectarGoogleSheets() {
-  alert("Conectando a Google Sheets...");
-  // Implementar conexión real aquí
+function showAlert(mensaje, tipo = 'success') {
+    const notification = document.createElement('div');
+    notification.className = `notificacion ${tipo}`;
+    notification.textContent = mensaje;
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+        notification.remove();
+    }, 3000);
 }
 
-function mostrarRegistro() {
-  alert("Función de registro en desarrollo");
+function formatCurrency(value) {
+    return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(value);
 }
 
-function cerrarSesion() {
-  mostrarLogin();
+function generarRecomendacion(desviacion) {
+    return desviacion > 0 
+        ? "Revisar proveedor y negociar descuentos" 
+        : "Mantener buen desempeño";
 }
 
-// Iniciar
-mostrarLogin();
+// Inicializar gráficos al cargar
+window.onload = inicializarGraficos;
